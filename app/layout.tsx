@@ -1,3 +1,4 @@
+// app/layout.tsx
 import './globals.css';
 import type { Metadata } from 'next';
 import fs from 'fs';
@@ -10,7 +11,6 @@ export const metadata: Metadata = {
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
-  // Auto-scan /public/bg for video files
   let sources: string[] = [];
   try {
     const dir = path.join(process.cwd(), 'public', 'bg');
@@ -18,17 +18,18 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       .readdirSync(dir)
       .filter((f) => /\.(mp4|webm|mov)$/i.test(f))
       .map((f) => `/bg/${f}`);
-  } catch {
-    sources = [];
-  }
+  } catch {}
 
   return (
     <html lang="en">
-      <body>
-        <div className="relative min-h-screen">
-          <RandomBackgroundVideo sources={sources} poster="/bg/fallback.jpg" />
+      <body className="bg-black text-white">
+        {/* Background layer */}
+        <RandomBackgroundVideo sources={sources} poster="/bg/fallback.jpg" />
+
+        {/* Foreground content */}
+        <main className="relative z-10 min-h-screen">
           {children}
-        </div>
+        </main>
       </body>
     </html>
   );

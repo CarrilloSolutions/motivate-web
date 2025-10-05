@@ -1,11 +1,12 @@
+// components/RandomBackgroundVideo.tsx
 'use client';
 
 import { useEffect, useRef, useState } from 'react';
 
 type Props = {
-  sources: string[];         // absolute paths like /bg/xxx.mp4
-  poster?: string;           // optional fallback image
-  overlay?: boolean;         // dark overlay for readability
+  sources: string[];
+  poster?: string;
+  overlay?: boolean;
 };
 
 export default function RandomBackgroundVideo({
@@ -16,7 +17,6 @@ export default function RandomBackgroundVideo({
   const [chosen, setChosen] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  // Pick ONE on mount; change only after hard refresh
   useEffect(() => {
     const prefersReduced =
       typeof window !== 'undefined' &&
@@ -30,7 +30,6 @@ export default function RandomBackgroundVideo({
     setChosen(sources[idx]);
   }, [sources]);
 
-  // Pause when tab hidden (tiny perf win)
   useEffect(() => {
     const onVis = () => {
       const v = videoRef.current;
@@ -42,12 +41,12 @@ export default function RandomBackgroundVideo({
     return () => document.removeEventListener('visibilitychange', onVis);
   }, []);
 
-  // Fallback image only
+  // Fallback image when reduced-motion or no sources
   if (!chosen) {
     return (
       <>
         <div
-          className="fixed inset-0 -z-10 bg-black"
+          className="fixed inset-0 z-0 bg-black"
           aria-hidden
           style={{
             backgroundImage: `url(${poster})`,
@@ -57,7 +56,7 @@ export default function RandomBackgroundVideo({
         />
         {overlay && (
           <div
-            className="fixed inset-0 -z-10 pointer-events-none"
+            className="fixed inset-0 z-0 pointer-events-none"
             aria-hidden
             style={{
               background:
@@ -73,7 +72,7 @@ export default function RandomBackgroundVideo({
     <>
       <video
         ref={videoRef}
-        className="fixed inset-0 -z-10 w-full h-full object-cover pointer-events-none"
+        className="fixed inset-0 z-0 w-full h-full object-cover pointer-events-none"
         src={chosen}
         poster={poster}
         muted
@@ -81,11 +80,15 @@ export default function RandomBackgroundVideo({
         autoPlay
         playsInline
         preload="metadata"
+        disablePictureInPicture
+        controlsList="nodownload noplaybackrate noremoteplayback"
+        onContextMenu={(e) => e.preventDefault()}
+        draggable={false}
         aria-hidden
       />
       {overlay && (
         <div
-          className="fixed inset-0 -z-10 pointer-events-none"
+          className="fixed inset-0 z-0 pointer-events-none"
           aria-hidden
           style={{
             background:
