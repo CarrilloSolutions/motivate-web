@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 
 type Props = {
-  /** Optional pool of video sources in /public (e.g., ["/bg/loop1.mp4", "/bg/loop2.mp4"]) */
+  /** Optional custom pool; if omitted we use defaults in /public/bg */
   sources?: string[];
-  /** Fallback image when reduced-motion or no sources */
+  /** Fallback poster */
   poster?: string;
-  /** Dark overlay toggle */
+  /** Dark overlay */
   overlay?: boolean;
 };
 
@@ -16,24 +16,24 @@ export default function RandomBackgroundVideo({
   poster = "/bg/fallback.jpg",
   overlay = true,
 }: Props) {
-  const [chosen, setChosen] = useState<string | null>(null);
+  // ✅ Always have a pool (fixes “only fallback image” issue)
+  const pool = useMemo(
+    () =>
+      (sources && sources.length > 0)
+        ? sources
+        : ["/bg/loop1.mp4", "/bg/loop2.mp4", "/bg/loop3.mp4"],
+    [sources]
+  );
+
+  const [src, setSrc] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
-  // Pick a random source unless reduced motion or none provided
   useEffect(() => {
-    const prefersReduced =
-      typeof window !== "undefined" &&
-      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
+    const idx = Math.floor(Math.random() * pool.length);
+    setSrc(pool[idx] ?? null);
+  }, [pool]);
 
-    if (prefersReduced || !sources || sources.length === 0) {
-      setChosen(null);
-      return;
-    }
-    const idx = Math.floor(Math.random() * sources.length);
-    setChosen(sources[idx]);
-  }, [sources]);
-
-  // Pause on tab hidden; resume on visible
+  // Pause when tab hidden
   useEffect(() => {
     const onVis = () => {
       const v = videoRef.current;
@@ -45,63 +45,38 @@ export default function RandomBackgroundVideo({
     return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
 
-  // Fallback image when reduced-motion or no sources
-  if (!chosen) {
+  if (!src) {
+    // Quick image fallback while first pick happens
     return (
       <>
-        <div
-          className="fixed inset-0 z-0 bg-black"
+        <img
+          src={poster}
+          alt=""
+          className="fixed inset-0 z-0 w-full h-full object-cover"
           aria-hidden
-          style={{
-            backgroundImage: `url(${poster})`,
-            backgroundSize: "cover",
-            backgroundPosition: "center",
-          }}
         />
-        {overlay && (
-          <div
-            className="fixed inset-0 z-0 pointer-events-none"
-            aria-hidden
-            style={{
-              background:
-                "linear-gradient(to bottom, rgba(0,0,0,.35), rgba(0,0,0,.6))",
-            }}
-          />
-        )}
+        {overlay && <div className="fixed inset-0 z-0 bg-black/45 pointer-events-none" aria-hidden />}
       </>
     );
   }
 
-  // Video background
   return (
     <>
       <video
         ref={videoRef}
-        className="fixed inset-0 z-0 w-full h-full object-cover pointer-events-none"
-        src={chosen}
-        poster={poster}
+        src={src}
         muted
         loop
         autoPlay
         playsInline
         preload="metadata"
+        className="fixed inset-0 z-0 w-full h-full object-cover pointer-events-none"
         disablePictureInPicture
         controlsList="nodownload noplaybackrate noremoteplayback"
         onContextMenu={(e) => e.preventDefault()}
-        draggable={false}
         aria-hidden
       />
-      {overlay && (
-        <div
-          className="fixed inset-0 z-0 pointer-events-none"
-          aria-hidden
-          style={{
-            background:
-              "linear-gradient(to bottom, rgba(0,0,0,.35), rgba(0,0,0,.6))",
-          }}
-        />
-      )}
+      {overlay && <div className="fixed inset-0 z-0 bg-black/45 pointer-events-none" aria-hidden />}
     </>
   );
 }
-
