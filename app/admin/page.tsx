@@ -3,8 +3,18 @@
 import RequireAuth from "@/components/RequireAuth";
 import Navbar from "@/components/Navbar";
 import { auth, db, storage } from "@/lib/firebase";
-import { ref, uploadBytesResumable, getDownloadURL, updateMetadata } from "firebase/storage";
-import { collection, addDoc, serverTimestamp, getDocs } from "firebase/firestore";
+import {
+  ref,
+  uploadBytesResumable,
+  getDownloadURL,
+  updateMetadata,
+} from "firebase/storage";
+import {
+  collection,
+  addDoc,
+  serverTimestamp,
+  getDocs,
+} from "firebase/firestore";
 import { useEffect, useState } from "react";
 
 const admins = (process.env.NEXT_PUBLIC_ADMIN_EMAILS ?? "")
@@ -37,7 +47,7 @@ export default function AdminPage() {
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
 
-      // allow only videos
+      // only video/* files
       if (!f.type || !f.type.startsWith("video/")) {
         console.warn("Skipping non-video file:", f.name, f.type);
         continue;
@@ -50,26 +60,51 @@ export default function AdminPage() {
       try {
         await new Promise<void>((resolve, reject) => {
           const task = uploadBytesResumable(storageRef, f, {
-            // IMPORTANT for audio to be recognized
+            // ensure browser/players recognize audio tracks
             contentType: f.type || "video/mp4",
           });
 
           task.on(
             "state_changed",
             (snap) => {
-              const pct = Math.round((snap.bytesTransferred / snap.totalBytes) * 100);
+              const pct = Math.round(
+                (snap.bytesTransferred / snap.totalBytes) * 100
+              );
               setProgress(pct);
             },
             (err) => reject(err),
             async () => {
-              const url = await getDownloadURL(storageRef);
-              await addDoc(collection(db, "videos"), {
-                url,
-                title: safeName.replace(/\.[^/.]+$/, ""),
-                hashtags: [],
-                createdAt: serverTimestamp(),
-              });
-              resolve();
+              try {
+                const url = await getDownloadURL(storageRef);
+
+                try {
+                  await addDoc(collection(db, "videos"), {
+                    url,
+                    title: safeName.replace(/\.[^/.]+$/, ""),
+                    hashtags: [],
+                    createdAt: serverTimestamp(),
+                  });
+                } catch (e: any) {
+                  const msg = e?.message ?? String(e);
+                  let hint = "";
+                  if (/app.?check/i.test(msg)) {
+                    hint =
+                      " — Firestore App Check is enforced and the client is missing/invalid token. Make sure App Check is initialized in lib/firebase.ts and re-deploy.";
+                  } else if (/insufficient permissions/i.test(msg)) {
+                    hint =
+                      " — Check your Firestore rules for writes to /videos and that you are signed in.";
+                  }
+                  setStatus(
+                    `Firestore addDoc failed for ${f.name}: ${msg}${hint}`
+                  );
+                  reject(e);
+                  return;
+                }
+
+                resolve();
+              } catch (e) {
+                reject(e);
+              }
             }
           );
         });
@@ -86,27 +121,35 @@ export default function AdminPage() {
     setProgress(0);
   };
 
-  // Fix existing video objects: set proper Content-Type on all
+  // One-click tool: fix existing video objects with proper Content-Type
   const fixExisting = async () => {
     setStatus("Fixing existing videos…");
-    let fixed = 0, skipped = 0, failed = 0;
+    let fixed = 0,
+      skipped = 0,
+      failed = 0;
 
     try {
       const snap = await getDocs(collection(db, "videos"));
       for (const d of snap.docs) {
         const data = d.data() as any;
         const url: string | undefined = data?.url;
-        if (!url) { skipped++; continue; }
+        if (!url) {
+          skipped++;
+          continue;
+        }
 
         // Build a reference to the object
         let objRef;
         try {
-          objRef = ref(storage, url);     // works for https Storage URLs
+          objRef = ref(storage, url); // handles gs:/https URLs produced by Storage
         } catch {
           // fallback: derive the path from the URL
-          const encoded = url.split("/o/")[1]?.split("?")[0]; // videos%2Ffile.mp4
-          if (!encoded) { skipped++; continue; }
-          const objectPath = decodeURIComponent(encoded);     // videos/file.mp4
+          const encoded = url.split("/o/")[1]?.split("?")[0]; // e.g. videos%2Ffile.mp4
+          if (!encoded) {
+            skipped++;
+            continue;
+          }
+          const objectPath = decodeURIComponent(encoded); // videos/file.mp4
           objRef = ref(storage, objectPath);
         }
 
@@ -119,7 +162,9 @@ export default function AdminPage() {
         }
       }
 
-      setStatus(`Fix complete. Fixed ${fixed}, skipped ${skipped}, failed ${failed}.`);
+      setStatus(
+        `Fix complete. Fixed ${fixed}, skipped ${skipped}, failed ${failed}.`
+      );
     } catch (e: any) {
       console.error("Fix existing error:", e);
       setStatus(`Fix error: ${e?.message ?? String(e)}`);
@@ -150,20 +195,28 @@ export default function AdminPage() {
             />
 
             <div className="flex gap-2">
-              <button className="btn btn-primary" onClick={uploadAll}>Upload</button>
-              <button className="btn" onClick={fixExisting}>Fix existing videos</button>
+              <button className="btn btn-primary" onClick={uploadAll}>
+                Upload
+              </button>
+              <button className="btn" onClick={fixExisting}>
+                Fix existing videos
+              </button>
             </div>
 
             {progress > 0 && progress < 100 && (
               <div className="w-full h-2 bg-white/10 rounded overflow-hidden">
-                <div className="h-2 bg-emerald-500 transition-all" style={{ width: `${progress}%` }} />
+                <div
+                  className="h-2 bg-emerald-500 transition-all"
+                  style={{ width: `${progress}%` }}
+                />
               </div>
             )}
 
             <div className="text-sm opacity-80">{status}</div>
 
             <p className="text-xs opacity-60">
-              You can extend this later (e.g., auto-tags/categories) if you want, but it's not required.
+              You can extend this later (e.g., auto-tags/categories) if you
+              want, but it's not required.
             </p>
           </div>
         </div>
