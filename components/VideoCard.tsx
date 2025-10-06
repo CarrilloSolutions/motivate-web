@@ -1,175 +1,186 @@
-'use client';
+"use client";
 
 import { useEffect, useRef, useState } from "react";
-import { motion } from "framer-motion";
-import { Heart, Bookmark } from "lucide-react";
 import { auth, db } from "@/lib/firebase";
-import { doc, setDoc, deleteDoc, serverTimestamp } from "firebase/firestore";
+import {
+  doc,
+  setDoc,
+  deleteDoc,
+  getDoc,
+  serverTimestamp,
+} from "firebase/firestore";
+import { onAuthStateChanged } from "firebase/auth";
 
-type VideoItem = {
+type VideoDoc = {
   id: string;
-  url: string;         // direct Storage download URL with token
+  url: string;
   title?: string;
-  hashtags?: string[];
+  tags?: string[]; // NEW
   createdAt?: any;
+  poster?: string;
 };
 
-export default function VideoCard({ item }: { item: VideoItem }) {
-  const ref = useRef<HTMLVideoElement>(null);
+function joinTags(tags?: string[]) {
+  if (!tags || tags.length === 0) return "";
+  return tags.map((t) => `#${t}`).join(" ");
+}
 
-  const [liked, setLiked]   = useState(false);
-  const [saved, setSaved]   = useState(false);
-  const [loading, setLoading] = useState(true);
-  const [muted, setMuted]   = useState(true);   // start muted so autoplay works
-  const [playing, setPlaying] = useState(true);
+export default function VideoCard({ video }: { video: VideoDoc }) {
+  const videoRef = useRef<HTMLVideoElement | null>(null);
+  const [uid, setUid] = useState<string | null>(null);
+  const [muted, setMuted] = useState(true);
+  const [liked, setLiked] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [isInView, setIsInView] = useState(false);
 
-  // remember user's unmute preference
   useEffect(() => {
-    if (typeof window === "undefined") return;
-    const pref = localStorage.getItem("motivate_unmuted") === "1";
-    if (pref) setMuted(false);
+    const unsub = onAuthStateChanged(auth, (u) => setUid(u?.uid ?? null));
+    return () => unsub();
   }, []);
 
+  // Intersection observer for autoplay/pause
   useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    const onCanPlay = () => setLoading(false);
-    el.addEventListener("canplay", onCanPlay);
-    return () => el.removeEventListener("canplay", onCanPlay);
-  }, []);
-
-  // Play/pause based on visibility
-  useEffect(() => {
-    const el = ref.current;
-    if (!el) return;
+    if (!videoRef.current) return;
+    const el = videoRef.current;
 
     const io = new IntersectionObserver(
-      (entries) => {
-        entries.forEach(async (entry) => {
-          if (entry.isIntersecting && entry.intersectionRatio > 0.95) {
-            try { await el.play(); setPlaying(true); } catch {}
-          } else {
-            el.pause();
-            setPlaying(false);
-          }
-        });
-      },
-      { threshold: [0.0, 0.25, 0.5, 0.75, 0.95, 1] }
+      ([entry]) => setIsInView(entry.isIntersecting),
+      { threshold: 0.75 }
     );
-
     io.observe(el);
     return () => io.disconnect();
   }, []);
 
-  const currentUser = () => auth.currentUser;
-
-  const toggle = async (kind: "like" | "save") => {
-    const u = currentUser();
-    if (!u) { alert("Please log in first."); return; }
-
-    const flag = kind === "like" ? liked : saved;
-    const setFlag = kind === "like" ? setLiked : setSaved;
-    const path = doc(db, "users", u.uid, kind === "like" ? "likes" : "saved", item.id);
-
-    if (flag) {
-      await deleteDoc(path);
-      setFlag(false);
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+    if (isInView) {
+      el.play().catch(() => {});
     } else {
-      await setDoc(path, { videoId: item.id, at: serverTimestamp() });
-      setFlag(true);
-      if (navigator.vibrate) navigator.vibrate(15);
+      el.pause();
     }
-  };
+  }, [isInView]);
 
-  // audio controls
-  const handleUnmute = async () => {
-    const el = ref.current; if (!el) return;
-    try {
-      el.muted = false; el.volume = 1;
-      await el.play();
-      setMuted(false); setPlaying(true);
-      localStorage.setItem("motivate_unmuted", "1");
-    } catch {}
-  };
+  // Load initial like/save state
+  useEffect(() => {
+    if (!uid) return;
+    (async () => {
+      const likeRef = doc(db, "users", uid, "likes", video.id);
+      const saveRef = doc(db, "users", uid, "saved", video.id);
+      const [likeSnap, saveSnap] = await Promise.all([
+        getDoc(likeRef),
+        getDoc(saveRef),
+      ]);
+      setLiked(likeSnap.exists());
+      setSaved(saveSnap.exists());
+    })();
+  }, [uid, video.id]);
 
-  const toggleMute = () => {
-    const el = ref.current; if (!el) return;
-    if (muted) void handleUnmute();
-    else { el.muted = true; setMuted(true); }
-  };
+  async function toggleLike() {
+    if (!uid) return;
+    const ref = doc(db, "users", uid, "likes", video.id);
+    if (liked) {
+      await deleteDoc(ref);
+      setLiked(false);
+    } else {
+      await setDoc(ref, {
+        videoId: video.id,
+        title: video.title ?? "",
+        url: video.url,
+        tags: video.tags ?? [],
+        createdAt: video.createdAt ?? serverTimestamp(),
+        likedAt: serverTimestamp(),
+        poster: video.poster ?? null,
+      });
+      setLiked(true);
+    }
+  }
 
-  const handleVideoClick = () => {
-    const el = ref.current; if (!el) return;
-    if (muted) { void handleUnmute(); return; }
-    if (el.paused) { el.play(); setPlaying(true); }
-    else { el.pause(); setPlaying(false); }
-  };
+  async function toggleSave() {
+    if (!uid) return;
+    const ref = doc(db, "users", uid, "saved", video.id);
+    if (saved) {
+      await deleteDoc(ref);
+      setSaved(false);
+    } else {
+      await setDoc(ref, {
+        videoId: video.id,
+        title: video.title ?? "",
+        url: video.url,
+        tags: video.tags ?? [],
+        createdAt: video.createdAt ?? serverTimestamp(),
+        savedAt: serverTimestamp(),
+        poster: video.poster ?? null,
+      });
+      setSaved(true);
+    }
+  }
 
   return (
-    <div className="relative w-full max-w-xl mx-auto">
-      <div className="card p-0 overflow-hidden">
+    <div className="relative w-full max-w-2xl mx-auto my-6">
+      <div
+        className={`rounded-2xl overflow-hidden shadow-lg transition ring-2 ${
+          liked ? "ring-pink-500" : "ring-transparent"
+        }`}
+      >
         <video
-          ref={ref}
-          src={item.url}                 // <— direct Storage URL
-          className="w-full h-[70vh] object-cover"
-          style={{ scrollSnapAlign: "center" }}
-          loop
-          autoPlay
+          ref={videoRef}
+          src={video.url}
           muted={muted}
           playsInline
-          preload="metadata"
+          loop
+          poster={video.poster}
+          className="w-full h-auto bg-black"
           controls={false}
-          onClick={handleVideoClick}
         />
+      </div>
 
-        {loading && (
-          <div className="absolute inset-0 flex items-center justify-center text-white/70 text-sm">
-            loading...
-          </div>
-        )}
+      <div className="mt-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <button
+            onClick={toggleLike}
+            className={`px-3 py-1.5 rounded-full border text-sm transition ${
+              liked
+                ? "border-pink-500 text-pink-400 shadow-[0_0_12px_#ec4899]"
+                : "border-zinc-700 text-zinc-300"
+            }`}
+            aria-pressed={liked}
+          >
+            ♥ Like
+          </button>
+
+          <button
+            onClick={toggleSave}
+            className={`px-3 py-1.5 rounded-full border text-sm transition ${
+              saved
+                ? "border-emerald-500 text-emerald-400 shadow-[0_0_12px_#10b981]"
+                : "border-zinc-700 text-zinc-300"
+            }`}
+            aria-pressed={saved}
+          >
+            ⬇ Save
+          </button>
+        </div>
 
         <button
-          onClick={toggleMute}
-          className="absolute bottom-4 right-4 bg-black/60 text-white px-3 py-1.5 rounded-full"
+          onClick={() => setMuted((m) => !m)}
+          className="px-3 py-1.5 rounded-full border border-zinc-700 text-zinc-300 text-sm"
         >
-          {muted ? "Unmute 🔊" : "Mute 🔇"}
+          {muted ? "Unmute" : "Mute"}
         </button>
-
-        {!playing && !loading && (
-          <div className="absolute top-3 right-3 bg-black/60 text-white text-xs px-2 py-1 rounded">
-            Paused
-          </div>
-        )}
       </div>
 
-      <div className="mt-2 flex items-center justify-between">
-        <div className="text-sm opacity-80">
-          <div className="font-semibold">{item.title ?? "Motivation"}</div>
-          {!!item.hashtags?.length && (
-            <div className="text-xs">{item.hashtags.map((h) => `#${h}`).join(" ")}</div>
-          )}
-        </div>
-        <div className="flex gap-2">
-          <motion.button
-            whileTap={{ scale: 0.9 }}
-            animate={liked ? { scale: [1, 1.2, 1], boxShadow: "0 0 20px rgba(0,255,127,.6)" } : {}}
-            onClick={() => toggle("like")}
-            className={`icon-btn ${liked ? "glow" : ""}`}
-            aria-label="Like"
-          >
-            <Heart />
-          </motion.button>
-          <motion.button
-            whileTap={{ scale: 0.9 }}
-            animate={saved ? { scale: [1, 1.2, 1], boxShadow: "0 0 20px rgba(0,255,127,.6)" } : {}}
-            onClick={() => toggle("save")}
-            className={`icon-btn ${saved ? "glow" : ""}`}
-            aria-label="Save"
-          >
-            <Bookmark />
-          </motion.button>
-        </div>
-      </div>
+      {/* Title */}
+      {video.title ? (
+        <p className="mt-2 text-sm text-zinc-100 font-medium">
+          {video.title}
+        </p>
+      ) : null}
+
+      {/* Hashtags */}
+      {video.tags && video.tags.length > 0 ? (
+        <p className="text-xs text-zinc-400 mt-1">{joinTags(video.tags)}</p>
+      ) : null}
     </div>
   );
 }

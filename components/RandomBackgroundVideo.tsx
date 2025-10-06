@@ -1,28 +1,31 @@
-// components/RandomBackgroundVideo.tsx
-'use client';
+"use client";
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from "react";
 
 type Props = {
-  sources: string[];
+  /** Optional pool of video sources in /public (e.g., ["/bg/loop1.mp4", "/bg/loop2.mp4"]) */
+  sources?: string[];
+  /** Fallback image when reduced-motion or no sources */
   poster?: string;
+  /** Dark overlay toggle */
   overlay?: boolean;
 };
 
 export default function RandomBackgroundVideo({
   sources,
-  poster = '/bg/fallback.jpg',
+  poster = "/bg/fallback.jpg",
   overlay = true,
 }: Props) {
   const [chosen, setChosen] = useState<string | null>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
 
+  // Pick a random source unless reduced motion or none provided
   useEffect(() => {
     const prefersReduced =
-      typeof window !== 'undefined' &&
-      window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      typeof window !== "undefined" &&
+      window.matchMedia?.("(prefers-reduced-motion: reduce)").matches;
 
-    if (prefersReduced || !sources?.length) {
+    if (prefersReduced || !sources || sources.length === 0) {
       setChosen(null);
       return;
     }
@@ -30,6 +33,7 @@ export default function RandomBackgroundVideo({
     setChosen(sources[idx]);
   }, [sources]);
 
+  // Pause on tab hidden; resume on visible
   useEffect(() => {
     const onVis = () => {
       const v = videoRef.current;
@@ -37,8 +41,8 @@ export default function RandomBackgroundVideo({
       if (document.hidden) v.pause();
       else v.play().catch(() => {});
     };
-    document.addEventListener('visibilitychange', onVis);
-    return () => document.removeEventListener('visibilitychange', onVis);
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
   }, []);
 
   // Fallback image when reduced-motion or no sources
@@ -50,8 +54,8 @@ export default function RandomBackgroundVideo({
           aria-hidden
           style={{
             backgroundImage: `url(${poster})`,
-            backgroundSize: 'cover',
-            backgroundPosition: 'center',
+            backgroundSize: "cover",
+            backgroundPosition: "center",
           }}
         />
         {overlay && (
@@ -60,7 +64,7 @@ export default function RandomBackgroundVideo({
             aria-hidden
             style={{
               background:
-                'linear-gradient(to bottom, rgba(0,0,0,.35), rgba(0,0,0,.6))',
+                "linear-gradient(to bottom, rgba(0,0,0,.35), rgba(0,0,0,.6))",
             }}
           />
         )}
@@ -68,6 +72,7 @@ export default function RandomBackgroundVideo({
     );
   }
 
+  // Video background
   return (
     <>
       <video
@@ -92,10 +97,11 @@ export default function RandomBackgroundVideo({
           aria-hidden
           style={{
             background:
-              'linear-gradient(to bottom, rgba(0,0,0,.35), rgba(0,0,0,.6))',
+              "linear-gradient(to bottom, rgba(0,0,0,.35), rgba(0,0,0,.6))",
           }}
         />
       )}
     </>
   );
 }
+
