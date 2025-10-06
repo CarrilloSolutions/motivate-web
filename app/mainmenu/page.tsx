@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
 import { db } from "@/lib/firebase";
+import { BG_SOURCES } from "@/lib/bg";
 import VideoCard from "@/components/VideoCard";
 import RandomBackgroundVideo from "@/components/RandomBackgroundVideo";
 import Navbar from "@/components/Navbar";
@@ -29,7 +30,6 @@ export default function MainMenuPage() {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const sectionsRef = useRef<(HTMLDivElement | null)[]>([]);
 
-  // feed
   useEffect(() => {
     const q = query(collection(db, "videos"), orderBy("createdAt", "desc"));
     const unsub = onSnapshot(q, (snap) => {
@@ -39,11 +39,9 @@ export default function MainMenuPage() {
     return () => unsub();
   }, []);
 
-  // intersection to track current card
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-
     const io = new IntersectionObserver(
       (entries) => {
         for (const e of entries) {
@@ -55,12 +53,10 @@ export default function MainMenuPage() {
       },
       { root: container, threshold: 0.6 }
     );
-
     sectionsRef.current.forEach((el) => el && io.observe(el));
     return () => io.disconnect();
   }, [videos.length]);
 
-  // advance to next
   const goNext = () => {
     const next = Math.min(activeIndex + 1, videos.length - 1);
     const el = sectionsRef.current[next];
@@ -77,25 +73,23 @@ export default function MainMenuPage() {
 
   return (
     <div className="relative">
-      <RandomBackgroundVideo />
+      {/* ✅ Use your real files */}
+      <RandomBackgroundVideo sources={BG_SOURCES} />
 
-      {/* Auto-scroll toggle */}
       <div className="fixed right-4 top-4 z-20">
         <button
           onClick={toggleAuto}
           className={`rounded-full px-3 py-1.5 text-sm border ${
             autoScroll ? "border-emerald-500 text-emerald-400" : "border-zinc-600 text-zinc-300"
           } bg-black/40 backdrop-blur`}
-          title="Auto-scroll to next video when finished"
         >
           Auto-scroll: {autoScroll ? "On" : "Off"}
         </button>
       </div>
 
-      {/* Snap container */}
       <div
         ref={containerRef}
-        className="relative z-10 h-screen overflow-y-scroll snap-y snap-mandatory scroll-smooth"
+        className="relative z-10 h-screen overflow-y-scroll snap-y snap-mandatory scroll-smooth pb-[calc(env(safe-area-inset-bottom)+96px)]"
       >
         <div className="px-4 pt-6">
           <h1 className="text-xl font-semibold text-zinc-100">Today's Motivation</h1>
@@ -106,7 +100,6 @@ export default function MainMenuPage() {
             key={v.id}
             data-index={i}
             ref={(el: HTMLDivElement | null) => {
-              // ✅ ensure callback returns void (not the assigned value)
               sectionsRef.current[i] = el;
             }}
             className="snap-start"
@@ -114,7 +107,7 @@ export default function MainMenuPage() {
             <VideoCard
               video={{ ...v, tags: (v.tags && v.tags.length ? v.tags : v.hashtags) ?? [] }}
               active={i === activeIndex}
-              defaultMuted={false}  // try sound first
+              defaultMuted={false}
               onEnded={() => {
                 if (autoScroll) goNext();
               }}
@@ -122,7 +115,7 @@ export default function MainMenuPage() {
           </section>
         ))}
 
-        <div className="h-24" />
+        <div className="h-8" />
       </div>
 
       <Navbar />

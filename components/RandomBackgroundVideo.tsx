@@ -1,13 +1,10 @@
 "use client";
 
-import { useEffect, useRef, useState, useMemo } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type Props = {
-  /** Optional custom pool; if omitted we use defaults in /public/bg */
-  sources?: string[];
-  /** Fallback poster */
+  sources?: string[];         // pass your pool (BG_SOURCES)
   poster?: string;
-  /** Dark overlay */
   overlay?: boolean;
 };
 
@@ -16,27 +13,25 @@ export default function RandomBackgroundVideo({
   poster = "/bg/fallback.jpg",
   overlay = true,
 }: Props) {
-  // ✅ Always have a pool (fixes “only fallback image” issue)
-  const pool = useMemo(
-    () =>
-      (sources && sources.length > 0)
-        ? sources
-        : ["/bg/loop1.mp4", "/bg/loop2.mp4", "/bg/loop3.mp4"],
-    [sources]
-  );
+  // Always have a pool (use whatever was passed; otherwise show poster)
+  const pool = useMemo(() => sources ?? [], [sources]);
 
   const [src, setSrc] = useState<string | null>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const vref = useRef<HTMLVideoElement>(null);
 
   useEffect(() => {
-    const idx = Math.floor(Math.random() * pool.length);
-    setSrc(pool[idx] ?? null);
+    if (!pool.length) {
+      setSrc(null);
+      return;
+    }
+    const i = Math.floor(Math.random() * pool.length);
+    setSrc(pool[i] ?? null);
   }, [pool]);
 
-  // Pause when tab hidden
+  // keep playing when tab regains focus
   useEffect(() => {
     const onVis = () => {
-      const v = videoRef.current;
+      const v = vref.current;
       if (!v) return;
       if (document.hidden) v.pause();
       else v.play().catch(() => {});
@@ -46,15 +41,10 @@ export default function RandomBackgroundVideo({
   }, []);
 
   if (!src) {
-    // Quick image fallback while first pick happens
+    // Poster fallback only until a source is picked
     return (
       <>
-        <img
-          src={poster}
-          alt=""
-          className="fixed inset-0 z-0 w-full h-full object-cover"
-          aria-hidden
-        />
+        <img src={poster} alt="" className="fixed inset-0 z-0 w-full h-full object-cover" aria-hidden />
         {overlay && <div className="fixed inset-0 z-0 bg-black/45 pointer-events-none" aria-hidden />}
       </>
     );
@@ -63,7 +53,7 @@ export default function RandomBackgroundVideo({
   return (
     <>
       <video
-        ref={videoRef}
+        ref={vref}
         src={src}
         muted
         loop
@@ -71,10 +61,7 @@ export default function RandomBackgroundVideo({
         playsInline
         preload="metadata"
         className="fixed inset-0 z-0 w-full h-full object-cover pointer-events-none"
-        disablePictureInPicture
-        controlsList="nodownload noplaybackrate noremoteplayback"
-        onContextMenu={(e) => e.preventDefault()}
-        aria-hidden
+        onError={() => setSrc(null)} // fall back to poster if a file fails
       />
       {overlay && <div className="fixed inset-0 z-0 bg-black/45 pointer-events-none" aria-hidden />}
     </>
