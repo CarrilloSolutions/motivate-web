@@ -39,9 +39,9 @@ function parseHashtags(input: string): string[] {
 }
 
 type PerFileMeta = {
-  name: string;        // original filename
-  title: string;       // editable
-  hashtagsText: string;// editable raw text
+  name: string;
+  title: string;
+  hashtagsText: string;
 };
 
 export default function AdminPage() {
@@ -56,7 +56,6 @@ export default function AdminPage() {
     setIsAdmin(email ? admins.includes(email) : false);
   }, []);
 
-  // Build the per-file editor model
   useEffect(() => {
     if (!files?.length) {
       setPerFile([]);
@@ -83,20 +82,18 @@ export default function AdminPage() {
     if (!files || files.length === 0) return;
 
     let uploaded = 0;
+    const failures: string[] = [];
     setStatus("Uploading…");
     setProgress(0);
 
     for (let i = 0; i < files.length; i++) {
       const f = files[i];
-      if (!f.type || !f.type.startsWith("video/")) {
-        console.warn("Skipping non-video file:", f.name, f.type);
+      if (!f.type?.startsWith("video/")) {
+        console.warn("Skipping non-video:", f.name);
         continue;
       }
 
       const safeName = slugify(f.name);
-      // ✅ All videos are stored in Firebase Storage (Google Cloud Storage) under /videos
-      // Bucket: your Firebase project's default bucket (e.g. motivate-true.appspot.com)
-      // Object path example: videos/1696712345678-0-Friendship.mp4
       const objectPath = `videos/${Date.now()}-${i}-${safeName}`;
       const storageRef = ref(storage, objectPath);
 
@@ -122,14 +119,16 @@ export default function AdminPage() {
               setProgress(pct);
             },
             (err) => {
+              console.error("Storage upload error:", err);
               const code = (err as any)?.code ?? "";
               const msg = (err as any)?.message ?? String(err);
-              setStatus(`Storage upload failed for ${f.name}: [${code}] ${msg}`);
+              const line = `Storage upload failed for ${f.name}: [${code}] ${msg}`;
+              failures.push(line);
+              setStatus(line);
               reject(err);
             },
             async () => {
               try {
-                // keep the metadata consistent
                 await updateMetadata(storageRef, {
                   contentType: f.type || "video/mp4",
                 });
@@ -137,27 +136,31 @@ export default function AdminPage() {
                 const url = await getDownloadURL(storageRef);
 
                 try {
-                  // ✅ Firestore document saved in collection /videos
                   await addDoc(collection(db, "videos"), {
-                    url,                            // download URL from Storage
+                    url,
                     title: (meta.title || safeName).trim(),
-                    hashtags,                       // array<string>
+                    hashtags,
                     createdAt: serverTimestamp(),
-                    // poster: optional string if you later add thumbnails
                   });
                 } catch (e: any) {
+                  console.error("Firestore addDoc error:", e);
                   const code = e?.code ?? "";
                   const msg = e?.message ?? String(e);
-                  setStatus(`Firestore addDoc failed for ${f.name}: [${code}] ${msg}`);
+                  const line = `Firestore addDoc failed for ${f.name}: [${code}] ${msg}`;
+                  failures.push(line);
+                  setStatus(line);
                   reject(e);
                   return;
                 }
 
                 resolve();
               } catch (e: any) {
+                console.error("Storage finalize error:", e);
                 const code = e?.code ?? "";
                 const msg = e?.message ?? String(e);
-                setStatus(`Storage finalize failed for ${f.name}: [${code}] ${msg}`);
+                const line = `Storage finalize failed for ${f.name}: [${code}] ${msg}`;
+                failures.push(line);
+                setStatus(line);
                 reject(e);
               }
             }
@@ -166,19 +169,20 @@ export default function AdminPage() {
 
         uploaded++;
         setStatus(`Uploaded ${uploaded}/${files.length}`);
-      } catch (e: any) {
-        console.error("Upload failed:", f.name, e);
-        // status already set inside the promise
+      } catch {
+        // failure already recorded
       }
     }
 
-    setStatus(`Done. Videos added. (${uploaded}/${files?.length ?? 0})`);
+    if (failures.length) {
+      setStatus(`Done with errors (${uploaded}/${files?.length ?? 0}). Last error: ${failures[failures.length - 1]}`);
+    } else {
+      setStatus(`Done. Videos added. (${uploaded}/${files?.length ?? 0})`);
+    }
     setProgress(0);
-    setFiles(null);
-    setPerFile([]);
+    // keep files in the chooser so user can retry failed ones if needed
   };
 
-  // One-click: fix existing Storage objects to have contentType video/mp4
   const fixExisting = async () => {
     setStatus("Fixing existing videos…");
     let fixed = 0,
@@ -195,18 +199,16 @@ export default function AdminPage() {
           continue;
         }
 
-        // Build a reference to the object from its download URL
         let objRef;
         try {
-          objRef = ref(storage, url); // works for gs:/https URLs
+          objRef = ref(storage, url);
         } catch {
-          const encoded = url.split("/o/")[1]?.split("?")[0]; // e.g. videos%2Ffile.mp4
+          const encoded = url.split("/o/")[1]?.split("?")[0];
           if (!encoded) {
             skipped++;
             continue;
           }
-          const objectPath = decodeURIComponent(encoded); // videos/file.mp4
-          objRef = ref(storage, objectPath);
+          objRef = ref(storage, decodeURIComponent(encoded));
         }
 
         try {
@@ -243,7 +245,6 @@ export default function AdminPage() {
           <div className="mx-auto max-w-3xl px-4 space-y-4">
             <h2 className="text-xl font-bold">Admin Upload</h2>
 
-            {/* who is signed in (useful when debugging rules) */}
             <p className="text-xs opacity-70">
               Signed in as: {auth.currentUser?.email} — UID: {auth.currentUser?.uid}
             </p>
@@ -255,7 +256,6 @@ export default function AdminPage() {
               onChange={(e) => setFiles(e.target.files)}
             />
 
-            {/* Per-file Title + Hashtags editor */}
             {perFile.length > 0 && (
               <div className="rounded-xl border border-white/10 p-4 space-y-4">
                 {perFile.map((m, idx) => (
@@ -318,8 +318,7 @@ export default function AdminPage() {
             <div className="text-sm opacity-80">{status}</div>
 
             <p className="text-xs opacity-60">
-              Files are stored in <code>/videos</code> in your Firebase Storage
-              bucket; a document is added in Firestore <code>/videos</code> with title + hashtags.
+              Files are stored in <code>/videos</code> in your Firebase Storage bucket; a document is added in Firestore <code>/videos</code> with title + hashtags.
             </p>
           </div>
         </div>
