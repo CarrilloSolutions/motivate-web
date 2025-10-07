@@ -1,9 +1,16 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { auth, db } from "@/lib/firebase";
+import { auth, db, storage } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
-import { doc, setDoc, deleteDoc, getDoc, serverTimestamp } from "firebase/firestore";
+import {
+  doc as fdoc,
+  setDoc,
+  deleteDoc,
+  getDoc,
+  serverTimestamp,
+} from "firebase/firestore";
+import { ref as sref, deleteObject } from "firebase/storage";
 
 type VideoDoc = {
   id: string;
@@ -25,6 +32,12 @@ type Props = {
   defaultMuted?: boolean;
 };
 
+const admins =
+  (process.env.NEXT_PUBLIC_ADMIN_EMAILS ?? "")
+    .split(",")
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+
 export default function VideoCard({
   video,
   active = false,
@@ -32,33 +45,45 @@ export default function VideoCard({
   defaultMuted = false,
 }: Props) {
   const vref = useRef<HTMLVideoElement | null>(null);
+
+  // auth state
   const [uid, setUid] = useState<string | null>(null);
+  const [email, setEmail] = useState<string | null>(null);
 
-  // ---- audio handling
+  // audio / playback prefs
   const [muted, setMuted] = useState<boolean>(defaultMuted);
-  const [autoplayForcedMute, setAutoplayForcedMute] = useState(false); // if browser blocked sound
+  const [autoplayForcedMute, setAutoplayForcedMute] = useState(false);
+  const [broken, setBroken] = useState(false);
 
-  // load stored preference once
+  // user flags
+  const [liked, setLiked] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  // ---- auth listener
   useEffect(() => {
-    const stored = typeof window !== "undefined" ? localStorage.getItem("mutedPref") : null;
-    if (stored !== null) {
-      setMuted(stored === "true");
-    }
+    const unsub = onAuthStateChanged(auth, (u) => {
+      setUid(u?.uid ?? null);
+      setEmail(u?.email ?? null);
+    });
+    return () => unsub();
   }, []);
 
-  // keep element in sync whenever muted state changes
+  const isAdminEmail =
+    email ? admins.includes(email.toLowerCase()) : false;
+
+  // ---- restore mute preference once
+  useEffect(() => {
+    const stored = typeof window !== "undefined" ? localStorage.getItem("mutedPref") : null;
+    if (stored !== null) setMuted(stored === "true");
+  }, []);
+
+  // keep element in sync when state changes
   useEffect(() => {
     const el = vref.current;
     if (el) el.muted = muted;
   }, [muted]);
 
-  // auth
-  useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => setUid(u?.uid ?? null));
-    return () => unsub();
-  }, []);
-
-  // play/pause based on active card
+  // ---- play/pause based on "active" card
   useEffect(() => {
     const el = vref.current;
     if (!el) return;
@@ -66,7 +91,7 @@ export default function VideoCard({
     if (active) {
       el.muted = muted;
       el.play().catch(() => {
-        // Browser blocked autoplay-with-audio → retry muted
+        // autoplay with sound may be blocked; retry muted once
         if (!muted) {
           setAutoplayForcedMute(true);
           el.muted = true;
@@ -79,16 +104,15 @@ export default function VideoCard({
     }
   }, [active, muted]);
 
-  // Tap video to pause/play. If autoplay previously forced mute, first tap enables sound.
+  // ---- tap video to pause/play, also lift forced mute
   const onVideoTap = () => {
     const el = vref.current;
     if (!el) return;
 
     if (autoplayForcedMute) {
       setAutoplayForcedMute(false);
-      setMuted(false); // enable sound after first user interaction
+      setMuted(false);
       localStorage.setItem("mutedPref", "false");
-      // try play again with sound
       el.muted = false;
       el.play().catch(() => {});
       return;
@@ -98,6 +122,7 @@ export default function VideoCard({
     else el.pause();
   };
 
+  // ---- toggle mute, persist preference
   function toggleMute() {
     const next = !muted;
     setMuted(next);
@@ -106,24 +131,21 @@ export default function VideoCard({
     if (el) el.muted = next;
   }
 
-  // initial like/save flags
+  // ---- initial like/save flags
   useEffect(() => {
     if (!uid) return;
     (async () => {
-      const likeRef = doc(db, "users", uid, "likes", video.id);
-      const saveRef = doc(db, "users", uid, "saved", video.id);
+      const likeRef = fdoc(db, "users", uid, "likes", video.id);
+      const saveRef = fdoc(db, "users", uid, "saved", video.id);
       const [likeSnap, saveSnap] = await Promise.all([getDoc(likeRef), getDoc(saveRef)]);
       setLiked(likeSnap.exists());
       setSaved(saveSnap.exists());
     })();
   }, [uid, video.id]);
 
-  const [liked, setLiked] = useState(false);
-  const [saved, setSaved] = useState(false);
-
   async function toggleLike() {
     if (!uid) return;
-    const ref = doc(db, "users", uid, "likes", video.id);
+    const ref = fdoc(db, "users", uid, "likes", video.id);
     if (liked) {
       await deleteDoc(ref);
       setLiked(false);
@@ -143,7 +165,7 @@ export default function VideoCard({
 
   async function toggleSave() {
     if (!uid) return;
-    const ref = doc(db, "users", uid, "saved", video.id);
+    const ref = fdoc(db, "users", uid, "saved", video.id);
     if (saved) {
       await deleteDoc(ref);
       setSaved(false);
@@ -161,9 +183,50 @@ export default function VideoCard({
     }
   }
 
+  // ---- ADMIN: delete current video (doc + storage object)
+  async function adminDeleteVideo() {
+    if (!isAdminEmail) return;
+
+    // 1) delete Firestore document
+    await deleteDoc(fdoc(db, "videos", video.id)).catch(() => {});
+
+    // 2) delete Storage object
+    try {
+      let objectRef = sref(storage, video.url); // works for gs:// or download URLs
+      // Some SDKs throw on https URLs; fall back to path decode:
+      if (!objectRef) throw new Error("bad ref");
+
+      await deleteObject(objectRef);
+    } catch {
+      try {
+        const enc = video.url.split("/o/")[1]?.split("?")[0];
+        if (enc) {
+          const path = decodeURIComponent(enc); // videos/file.mp4
+          await deleteObject(sref(storage, path));
+        }
+      } catch {
+        // ignore if already missing
+      }
+    }
+
+    // Optional: move to next item
+    onEnded?.();
+  }
+
   return (
     <div className="snap-start flex flex-col items-center py-6 min-h-screen relative z-10">
-      <div className="w-[min(90vw,720px)] rounded-3xl overflow-hidden ring-4 ring-white/10 bg-black/60 shadow-xl">
+      <div className="w-[min(90vw,720px)] rounded-3xl overflow-hidden ring-4 ring-white/10 bg-black/60 shadow-xl relative">
+        {/* Admin-only delete button */}
+        {isAdminEmail && (
+          <button
+            onClick={adminDeleteVideo}
+            className="absolute top-2 right-2 z-30 rounded-full bg-black/60 border border-white/20 px-2 py-1 text-xs text-white"
+            title="Delete video"
+          >
+            ✕
+          </button>
+        )}
+
         <video
           ref={vref}
           src={video.url}
@@ -173,24 +236,26 @@ export default function VideoCard({
           controls={false}
           className="w-full h-auto bg-black"
           onEnded={() => onEnded?.()}
-          onClick={onVideoTap}                 // ← tap to pause/play (and unforce mute)
-          onKeyDown={(e) => {                 // accessibility: Space/Enter
+          onClick={onVideoTap}
+          onKeyDown={(e) => {
             if (e.key === " " || e.key === "Enter") {
               e.preventDefault();
               onVideoTap();
             }
           }}
+          onError={() => setBroken(true)}
           tabIndex={0}
         />
       </div>
 
-      {/* ensure buttons are above any overlays and always clickable */}
       <div className="mt-3 w-[min(90vw,720px)] flex items-center justify-between gap-3 relative z-20 pointer-events-auto">
         <div className="flex items-center gap-2">
           <button
             onClick={toggleLike}
             className={`px-3 py-1.5 rounded-full border text-sm transition ${
-              liked ? "border-pink-500 text-pink-400 shadow-[0_0_12px_#ec4899]" : "border-zinc-700 text-zinc-300"
+              liked
+                ? "border-pink-500 text-pink-400 shadow-[0_0_12px_#ec4899]"
+                : "border-zinc-700 text-zinc-300"
             }`}
             aria-pressed={liked}
           >
@@ -199,7 +264,9 @@ export default function VideoCard({
           <button
             onClick={toggleSave}
             className={`px-3 py-1.5 rounded-full border text-sm transition ${
-              saved ? "border-emerald-500 text-emerald-400 shadow-[0_0_12px_#10b981]" : "border-zinc-700 text-zinc-300"
+              saved
+                ? "border-emerald-500 text-emerald-400 shadow-[0_0_12px_#10b981]"
+                : "border-zinc-700 text-zinc-300"
             }`}
             aria-pressed={saved}
           >
@@ -220,9 +287,17 @@ export default function VideoCard({
           <p className="text-sm text-zinc-100 font-medium">{video.title}</p>
           {(video.tags?.length || video.hashtags?.length) ? (
             <p className="text-xs text-zinc-400 mt-1">
-              {(video.tags ?? video.hashtags ?? []).map((t) => `#${t}`).join(" ")}
+              {(video.tags ?? video.hashtags ?? [])
+                .map((t) => `#${t}`)
+                .join(" ")}
             </p>
           ) : null}
+        </div>
+      )}
+
+      {broken && (
+        <div className="w-[min(90vw,720px)] mt-2 text-xs text-red-400">
+          This video file is unavailable.{isAdminEmail ? " You can remove it with the ✕ button." : ""}
         </div>
       )}
     </div>
