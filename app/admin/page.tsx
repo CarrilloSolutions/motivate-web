@@ -126,6 +126,10 @@ export default function AdminPage() {
         <div className="pt-6 pb-28">
           <div className="mx-auto max-w-3xl px-4 space-y-4">
             <h2 className="text-xl font-bold">Admin Upload</h2>
+            <p className="text-xs opacity-70">
+  Signed in as: {auth.currentUser?.email} — UID: {auth.currentUser?.uid}
+</p>
+
 
             <input type="file" accept="video/*" multiple onChange={(e) => setFiles(e.target.files)} />
 
