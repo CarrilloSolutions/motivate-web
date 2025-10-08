@@ -1,10 +1,11 @@
+// components/VideoCard.tsx
 "use client";
 
 import { useEffect, useRef, useState } from "react";
 import { auth, db, storage } from "@/lib/firebase";
 import { onAuthStateChanged } from "firebase/auth";
 import {
-  doc as fdoc,
+  doc,
   setDoc,
   deleteDoc,
   getDoc,
@@ -24,19 +25,19 @@ type VideoDoc = {
 
 type Props = {
   video: VideoDoc;
-  /** If true, this card should be playing. Optional so /saved can omit it. */
-  active?: boolean;
-  /** Called when the video ends (used by auto-scroll). */
-  onEnded?: () => void;
-  /** Start muted? Defaults to false (try to play with sound). */
-  defaultMuted?: boolean;
+  active?: boolean;          // if true, auto-play this card
+  onEnded?: () => void;      // used by auto-scroll
+  defaultMuted?: boolean;    // default false (try to play with sound)
 };
 
-const admins =
-  (process.env.NEXT_PUBLIC_ADMIN_EMAILS ?? "")
-    .split(",")
-    .map((s) => s.trim().toLowerCase())
-    .filter(Boolean);
+// your admin UIDs
+function isAdminUid(uid?: string | null) {
+  return !!uid && [
+    "qVV7S84dwqQa7KZBucDjaXvQJoi2",
+    "A8HX7M9zbbQRXj0rVcrVcl2vFM52",
+    "djiLQx25Cyg3VeqfhwviT0rgKMc2",
+  ].includes(uid);
+}
 
 export default function VideoCard({
   video,
@@ -45,55 +46,38 @@ export default function VideoCard({
   defaultMuted = false,
 }: Props) {
   const vref = useRef<HTMLVideoElement | null>(null);
-
-  // auth state
   const [uid, setUid] = useState<string | null>(null);
-  const [email, setEmail] = useState<string | null>(null);
-
-  // audio / playback prefs
   const [muted, setMuted] = useState<boolean>(defaultMuted);
-  const [autoplayForcedMute, setAutoplayForcedMute] = useState(false);
-  const [broken, setBroken] = useState(false);
-
-  // user flags
   const [liked, setLiked] = useState(false);
   const [saved, setSaved] = useState(false);
 
-  // ---- auth listener
+  // auth state
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
-      setUid(u?.uid ?? null);
-      setEmail(u?.email ?? null);
-    });
+    const unsub = onAuthStateChanged(auth, (u) => setUid(u?.uid ?? null));
     return () => unsub();
   }, []);
 
-  const isAdminEmail =
-    email ? admins.includes(email.toLowerCase()) : false;
-
-  // ---- restore mute preference once
+  // set initial like/save flags
   useEffect(() => {
-    const stored = typeof window !== "undefined" ? localStorage.getItem("mutedPref") : null;
-    if (stored !== null) setMuted(stored === "true");
-  }, []);
+    if (!uid) return;
+    (async () => {
+      const likeRef = doc(db, "users", uid, "likes", video.id);
+      const saveRef = doc(db, "users", uid, "saved", video.id);
+      const [likeSnap, saveSnap] = await Promise.all([getDoc(likeRef), getDoc(saveRef)]);
+      setLiked(likeSnap.exists());
+      setSaved(saveSnap.exists());
+    })();
+  }, [uid, video.id]);
 
-  // keep element in sync when state changes
-  useEffect(() => {
-    const el = vref.current;
-    if (el) el.muted = muted;
-  }, [muted]);
-
-  // ---- play/pause based on "active" card
+  // play/pause based on "active"
   useEffect(() => {
     const el = vref.current;
     if (!el) return;
-
     if (active) {
       el.muted = muted;
       el.play().catch(() => {
-        // autoplay with sound may be blocked; retry muted once
+        // if autoplay with sound is blocked, retry muted
         if (!muted) {
-          setAutoplayForcedMute(true);
           el.muted = true;
           el.play().catch(() => {});
         }
@@ -104,48 +88,10 @@ export default function VideoCard({
     }
   }, [active, muted]);
 
-  // ---- tap video to pause/play, also lift forced mute
-  const onVideoTap = () => {
-    const el = vref.current;
-    if (!el) return;
-
-    if (autoplayForcedMute) {
-      setAutoplayForcedMute(false);
-      setMuted(false);
-      localStorage.setItem("mutedPref", "false");
-      el.muted = false;
-      el.play().catch(() => {});
-      return;
-    }
-
-    if (el.paused) el.play().catch(() => {});
-    else el.pause();
-  };
-
-  // ---- toggle mute, persist preference
-  function toggleMute() {
-    const next = !muted;
-    setMuted(next);
-    localStorage.setItem("mutedPref", next ? "true" : "false");
-    const el = vref.current;
-    if (el) el.muted = next;
-  }
-
-  // ---- initial like/save flags
-  useEffect(() => {
-    if (!uid) return;
-    (async () => {
-      const likeRef = fdoc(db, "users", uid, "likes", video.id);
-      const saveRef = fdoc(db, "users", uid, "saved", video.id);
-      const [likeSnap, saveSnap] = await Promise.all([getDoc(likeRef), getDoc(saveRef)]);
-      setLiked(likeSnap.exists());
-      setSaved(saveSnap.exists());
-    })();
-  }, [uid, video.id]);
-
+  // like / save toggles
   async function toggleLike() {
     if (!uid) return;
-    const ref = fdoc(db, "users", uid, "likes", video.id);
+    const ref = doc(db, "users", uid, "likes", video.id);
     if (liked) {
       await deleteDoc(ref);
       setLiked(false);
@@ -165,7 +111,7 @@ export default function VideoCard({
 
   async function toggleSave() {
     if (!uid) return;
-    const ref = fdoc(db, "users", uid, "saved", video.id);
+    const ref = doc(db, "users", uid, "saved", video.id);
     if (saved) {
       await deleteDoc(ref);
       setSaved(false);
@@ -183,45 +129,65 @@ export default function VideoCard({
     }
   }
 
-  // ---- ADMIN: delete current video (doc + storage object)
-  async function adminDeleteVideo() {
-    if (!isAdminEmail) return;
+  // ADMIN: delete from feed (and storage) with a clear confirmation,
+  // then also remove from THIS user's likes/saved so no ghost cards remain.
+  async function deleteAsAdmin() {
+    if (!isAdminUid(uid)) return;
 
-    // 1) delete Firestore document
-    await deleteDoc(fdoc(db, "videos", video.id)).catch(() => {});
+    const msg =
+      "Delete this video from the public feed?\n\n" +
+      "This removes the Firestore /videos doc and tries to delete the Storage file. " +
+      "Your own Saved/Liked entries for this video will also be removed.";
 
-    // 2) delete Storage object
+    if (!confirm(msg)) return;
+
+    // 1) remove Firestore feed document
     try {
-      let objectRef = sref(storage, video.url); // works for gs:// or download URLs
-      // Some SDKs throw on https URLs; fall back to path decode:
-      if (!objectRef) throw new Error("bad ref");
+      await deleteDoc(doc(db, "videos", video.id));
+    } catch (e) {
+      // ignore; continue with storage delete so it's not orphaned
+    }
 
-      await deleteObject(objectRef);
+    // 2) delete the storage object (URL or path)
+    try {
+      const direct = sref(storage, video.url); // works with https:// or gs://
+      await deleteObject(direct);
     } catch {
-      try {
-        const enc = video.url.split("/o/")[1]?.split("?")[0];
-        if (enc) {
-          const path = decodeURIComponent(enc); // videos/file.mp4
+      // derive path from download URL if needed
+      const encoded = video.url.split("/o/")[1]?.split("?")[0]; // videos%2Ffile.mp4
+      if (encoded) {
+        const path = decodeURIComponent(encoded); // videos/file.mp4
+        try {
           await deleteObject(sref(storage, path));
+        } catch {
+          /* ignore */
         }
-      } catch {
-        // ignore if already missing
       }
     }
 
-    // Optional: move to next item
-    onEnded?.();
+    // 3) optional cleanup for current user so they don't still see it
+    try {
+      if (uid) {
+        await Promise.allSettled([
+          deleteDoc(doc(db, "users", uid, "saved", video.id)),
+          deleteDoc(doc(db, "users", uid, "likes", video.id)),
+        ]);
+      }
+    } catch {
+      /* ignore */
+    }
+
+    alert("Video removed from the feed.\nIf other users saved it previously, their personal copies may still exist.");
   }
 
   return (
-    <div className="snap-start flex flex-col items-center py-6 min-h-screen relative z-10">
-      <div className="w-[min(90vw,720px)] rounded-3xl overflow-hidden ring-4 ring-white/10 bg-black/60 shadow-xl relative">
-        {/* Admin-only delete button */}
-        {isAdminEmail && (
+    <div className="snap-start flex flex-col items-center py-6 min-h-screen pb-28">
+      <div className="relative w-[min(90vw,720px)] rounded-3xl overflow-hidden ring-4 ring-white/10 bg-black/60 shadow-xl">
+        {isAdminUid(uid) && (
           <button
-            onClick={adminDeleteVideo}
-            className="absolute top-2 right-2 z-30 rounded-full bg-black/60 border border-white/20 px-2 py-1 text-xs text-white"
-            title="Delete video"
+            onClick={deleteAsAdmin}
+            className="absolute right-2 top-2 z-50 px-2.5 py-1 rounded-full text-xs bg-black/60 border border-zinc-700 text-zinc-200 hover:bg-black/80"
+            title="Delete video from feed"
           >
             ✕
           </button>
@@ -236,19 +202,16 @@ export default function VideoCard({
           controls={false}
           className="w-full h-auto bg-black"
           onEnded={() => onEnded?.()}
-          onClick={onVideoTap}
-          onKeyDown={(e) => {
-            if (e.key === " " || e.key === "Enter") {
-              e.preventDefault();
-              onVideoTap();
-            }
+          onClick={() => {
+            const el = vref.current;
+            if (!el) return;
+            el.paused ? el.play().catch(()=>{}) : el.pause();
           }}
-          onError={() => setBroken(true)}
-          tabIndex={0}
         />
       </div>
 
-      <div className="mt-3 w-[min(90vw,720px)] flex items-center justify-between gap-3 relative z-20 pointer-events-auto">
+      {/* controls sit above the nav */}
+      <div className="mt-3 w-[min(90vw,720px)] flex items-center justify-between gap-3 z-50">
         <div className="flex items-center gap-2">
           <button
             onClick={toggleLike}
@@ -275,7 +238,7 @@ export default function VideoCard({
         </div>
 
         <button
-          onClick={toggleMute}
+          onClick={() => setMuted((m) => !m)}
           className="px-3 py-1.5 rounded-full border border-zinc-700 text-zinc-300 text-sm"
         >
           {muted ? "Unmute" : "Mute"}
@@ -283,21 +246,13 @@ export default function VideoCard({
       </div>
 
       {video.title && (
-        <div className="w-[min(90vw,720px)] mt-2 relative z-20">
+        <div className="w-[min(90vw,720px)] mt-2 z-50">
           <p className="text-sm text-zinc-100 font-medium">{video.title}</p>
           {(video.tags?.length || video.hashtags?.length) ? (
             <p className="text-xs text-zinc-400 mt-1">
-              {(video.tags ?? video.hashtags ?? [])
-                .map((t) => `#${t}`)
-                .join(" ")}
+              {(video.tags ?? video.hashtags ?? []).map((t) => `#${t}`).join(" ")}
             </p>
           ) : null}
-        </div>
-      )}
-
-      {broken && (
-        <div className="w-[min(90vw,720px)] mt-2 text-xs text-red-400">
-          This video file is unavailable.{isAdminEmail ? " You can remove it with the ✕ button." : ""}
         </div>
       )}
     </div>
