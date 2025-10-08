@@ -1,3 +1,4 @@
+// app/saved/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
@@ -6,6 +7,7 @@ import { onAuthStateChanged } from "firebase/auth";
 import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
 import VideoCard from "@/components/VideoCard";
 import RandomBackgroundVideo from "@/components/RandomBackgroundVideo";
+import Navbar from "@/components/Navbar";
 
 type SavedDoc = {
   videoId: string;
@@ -37,9 +39,9 @@ export default function SavedPage() {
   }, [uid]);
 
   return (
-    <div className="relative">
+    <div className="relative min-h-screen">
       <RandomBackgroundVideo />
-      <div className="relative z-10 px-4 pt-8 pb-16">
+      <div className="relative z-10 px-4 pt-8 pb-28">
         <h1 className="text-xl font-semibold text-zinc-100 mb-4">Saved</h1>
         {!uid ? (
           <p className="text-zinc-400">Sign in to see saved videos.</p>
@@ -57,10 +59,12 @@ export default function SavedPage() {
                 createdAt: s.createdAt,
                 poster: s.poster ?? undefined,
               }}
+              defaultMuted={false}
             />
           ))
         )}
       </div>
+      <Navbar />
     </div>
   );
 }
