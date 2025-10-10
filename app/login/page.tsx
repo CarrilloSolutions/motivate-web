@@ -1,7 +1,13 @@
 'use client';
+
 import { useEffect, useState } from "react";
 import { auth } from "@/lib/firebase";
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword, onAuthStateChanged, sendPasswordResetEmail } from "firebase/auth";
+import {
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  onAuthStateChanged,
+  sendPasswordResetEmail,
+} from "firebase/auth";
 import RandomBackgroundVideo from "@/components/RandomBackgroundVideo";
 
 export default function LoginPage() {
@@ -10,47 +16,77 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
+  // redirect if already signed in
   useEffect(() => {
     return onAuthStateChanged(auth, u => {
       if (u) window.location.href = "/mainmenu";
     });
   }, []);
 
-  const login = async () => {
+  // prevent Backspace from navigating when not typing in an input/textarea/contentEditable
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== "Backspace") return;
+      const target = e.target as HTMLElement | null;
+      const tag = target?.tagName ?? "";
+      const editable =
+        target?.isContentEditable ||
+        tag === "INPUT" ||
+        tag === "TEXTAREA";
+      if (!editable) {
+        e.preventDefault();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  // Single button: try login, else create
+  const continueLoginOrCreate = async () => {
     setLoading(true);
     setMessage("");
+
+    if (!email || !password) {
+      setMessage("Enter your email and password to continue.");
+      setLoading(false);
+      return;
+    }
+
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      if (navigator.vibrate) navigator.vibrate([10, 30]);
-    } catch (e:any) {
-      setMessage(e.message);
-    } finally {
-      setLoading(false);
+      if (navigator.vibrate) navigator.vibrate([10, 30]); // keep your haptic
+    } catch (e: any) {
+      if (e?.code === "auth/user-not-found") {
+        try {
+          await createUserWithEmailAndPassword(auth, email, password);
+          if (navigator.vibrate) navigator.vibrate([10, 30, 10]); // keep your haptic
+        } catch (createErr: any) {
+          setMessage(createErr?.message ?? String(createErr));
+          setLoading(false);
+          return;
+        }
+      } else {
+        setMessage(e?.message ?? String(e));
+        setLoading(false);
+        return;
+      }
     }
-  };
-
-  const create = async () => {
-    setLoading(true);
-    setMessage("");
-    try {
-      await createUserWithEmailAndPassword(auth, email, password);
-      if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
-    } catch (e:any) {
-      setMessage(e.message);
-    } finally {
-      setLoading(false);
-    }
+    setLoading(false);
   };
 
   const reset = async () => {
     if (!email) { setMessage("Enter your email to reset."); return; }
-    await sendPasswordResetEmail(auth, email);
-    setMessage("Password reset sent.");
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setMessage("Password reset sent.");
+    } catch (e: any) {
+      setMessage(e?.message ?? String(e));
+    }
   };
 
   return (
     <div className="relative min-h-screen">
-      {/* background looping video behind everything */}
+      {/* background looping video */}
       <RandomBackgroundVideo
         sources={[
           "/bg/3595-172488292.mp4",
@@ -64,13 +100,14 @@ export default function LoginPage() {
         overlay
       />
 
-      {/* your original login UI, unchanged */}
+      {/* original layout + styling preserved */}
       <div className="relative z-10 min-h-screen flex items-center justify-center px-6">
         <div className="w-full max-w-md space-y-6">
           <div className="text-center">
             <h1 className="text-4xl font-extrabold tracking-tight">Motivate</h1>
             <p className="opacity-70 mt-1">Real inspiration at will.</p>
           </div>
+
           <div className="card space-y-3">
             <input
               placeholder="Email"
@@ -87,15 +124,21 @@ export default function LoginPage() {
               className="w-full bg-black border border-neutral-700 rounded-xl px-4 py-3 text-black placeholder-black"
               style={{ color: "black", backgroundColor: "white" }}
             />
-            <button onClick={login} className="btn btn-primary w-full" disabled={loading}>
-              {loading ? "..." : "Log In"}
+
+            {/* Single action button as requested */}
+            <button
+              onClick={continueLoginOrCreate}
+              className="btn btn-primary w-full"
+              disabled={loading}
+            >
+              {loading ? "..." : "Log In / Create Account"}
             </button>
-            <button onClick={create} className="btn btn-secondary w-full" disabled={loading}>
-              Create Account
-            </button>
+
+            {/* Forgot password kept */}
             <button onClick={reset} className="text-sm underline underline-offset-4 opacity-80">
               Forgot password?
             </button>
+
             {message && <div className="text-xs text-red-400">{message}</div>}
           </div>
         </div>
