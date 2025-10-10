@@ -23,19 +23,14 @@ export default function LoginPage() {
     });
   }, []);
 
-  // prevent Backspace from navigating when not typing in an input/textarea/contentEditable
+  // prevent Backspace navigating when not typing
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "Backspace") return;
-      const target = e.target as HTMLElement | null;
-      const tag = target?.tagName ?? "";
-      const editable =
-        target?.isContentEditable ||
-        tag === "INPUT" ||
-        tag === "TEXTAREA";
-      if (!editable) {
-        e.preventDefault();
-      }
+      const t = e.target as HTMLElement | null;
+      const tag = t?.tagName ?? "";
+      const editable = t?.isContentEditable || tag === "INPUT" || tag === "TEXTAREA";
+      if (!editable) e.preventDefault();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -47,19 +42,21 @@ export default function LoginPage() {
     setMessage("");
 
     if (!email || !password) {
-      setMessage("Enter your email and password to continue.");
+      const note = "To create an account (or log in), enter your email and password first, then tap the button.";
+      setMessage(note);
+      if (typeof window !== "undefined") alert(note);
       setLoading(false);
       return;
     }
 
     try {
       await signInWithEmailAndPassword(auth, email, password);
-      if (navigator.vibrate) navigator.vibrate([10, 30]); // keep your haptic
+      if (navigator.vibrate) navigator.vibrate([10, 30]);
     } catch (e: any) {
       if (e?.code === "auth/user-not-found") {
         try {
           await createUserWithEmailAndPassword(auth, email, password);
-          if (navigator.vibrate) navigator.vibrate([10, 30, 10]); // keep your haptic
+          if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
         } catch (createErr: any) {
           setMessage(createErr?.message ?? String(createErr));
           setLoading(false);
@@ -125,7 +122,7 @@ export default function LoginPage() {
               style={{ color: "black", backgroundColor: "white" }}
             />
 
-            {/* Single action button as requested */}
+            {/* Single action button */}
             <button
               onClick={continueLoginOrCreate}
               className="btn btn-primary w-full"
