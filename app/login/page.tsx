@@ -1,3 +1,4 @@
+// app/login/page.tsx
 'use client';
 
 import { useEffect, useState } from "react";
@@ -16,58 +17,46 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
 
-  // redirect if already signed in
   useEffect(() => {
     return onAuthStateChanged(auth, u => {
       if (u) window.location.href = "/mainmenu";
     });
   }, []);
 
-  // prevent Backspace navigating when not typing
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key !== "Backspace") return;
-      const t = e.target as HTMLElement | null;
-      const tag = t?.tagName ?? "";
-      const editable = t?.isContentEditable || tag === "INPUT" || tag === "TEXTAREA";
-      if (!editable) e.preventDefault();
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
-
-  // Single button: try login, else create
+  // Single button: try sign-in; if user doesn't exist, create account
   const continueLoginOrCreate = async () => {
     setLoading(true);
     setMessage("");
 
     if (!email || !password) {
-      const note = "To create an account (or log in), enter your email and password first, then tap the button.";
-      setMessage(note);
-      if (typeof window !== "undefined") alert(note);
+      setMessage("Enter your email and password to continue.");
       setLoading(false);
       return;
     }
 
     try {
+      // 1) Try to sign in
       await signInWithEmailAndPassword(auth, email, password);
-      if (navigator.vibrate) navigator.vibrate([10, 30]);
+      if (navigator.vibrate) navigator.vibrate([10, 30]); // original login haptic
     } catch (e: any) {
+      // 2) If no such user, create account
       if (e?.code === "auth/user-not-found") {
         try {
           await createUserWithEmailAndPassword(auth, email, password);
-          if (navigator.vibrate) navigator.vibrate([10, 30, 10]);
+          if (navigator.vibrate) navigator.vibrate([10, 30, 10]); // original create haptic
         } catch (createErr: any) {
           setMessage(createErr?.message ?? String(createErr));
           setLoading(false);
           return;
         }
       } else {
+        // Other sign-in errors (wrong password, invalid email, etc.)
         setMessage(e?.message ?? String(e));
         setLoading(false);
         return;
       }
     }
+
     setLoading(false);
   };
 
@@ -83,7 +72,7 @@ export default function LoginPage() {
 
   return (
     <div className="relative min-h-screen">
-      {/* background looping video */}
+      {/* background looping video behind everything */}
       <RandomBackgroundVideo
         sources={[
           "/bg/3595-172488292.mp4",
@@ -97,14 +86,13 @@ export default function LoginPage() {
         overlay
       />
 
-      {/* original layout + styling preserved */}
+      {/* original login UI, unchanged */}
       <div className="relative z-10 min-h-screen flex items-center justify-center px-6">
         <div className="w-full max-w-md space-y-6">
           <div className="text-center">
             <h1 className="text-4xl font-extrabold tracking-tight">Motivate</h1>
             <p className="opacity-70 mt-1">Real inspiration at will.</p>
           </div>
-
           <div className="card space-y-3">
             <input
               placeholder="Email"
@@ -122,7 +110,7 @@ export default function LoginPage() {
               style={{ color: "black", backgroundColor: "white" }}
             />
 
-            {/* Single action button */}
+            {/* Single button: Log In / Create Account */}
             <button
               onClick={continueLoginOrCreate}
               className="btn btn-primary w-full"
@@ -131,7 +119,7 @@ export default function LoginPage() {
               {loading ? "..." : "Log In / Create Account"}
             </button>
 
-            {/* Forgot password kept */}
+            {/* Forgot password (unchanged) */}
             <button onClick={reset} className="text-sm underline underline-offset-4 opacity-80">
               Forgot password?
             </button>
