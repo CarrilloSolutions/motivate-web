@@ -8,6 +8,7 @@ import {
   createUserWithEmailAndPassword,
   onAuthStateChanged,
   sendPasswordResetEmail,
+  fetchSignInMethodsForEmail,
 } from "firebase/auth";
 import RandomBackgroundVideo from "@/components/RandomBackgroundVideo";
 
@@ -16,6 +17,8 @@ export default function LoginPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+  const [wrongAttempts, setWrongAttempts] = useState(0);
+  const [toast, setToast] = useState<string>("");
 
   useEffect(() => {
     return onAuthStateChanged(auth, u => {
@@ -23,7 +26,13 @@ export default function LoginPage() {
     });
   }, []);
 
-  // Single button: try sign-in; if user doesn't exist, create account
+  // tiny toast helper (non-intrusive)
+  const showToast = (text: string, ms = 3000) => {
+    setToast(text);
+    window.setTimeout(() => setToast(""), ms);
+  };
+
+  // One button: choose create or sign-in based on existing methods
   const continueLoginOrCreate = async () => {
     setLoading(true);
     setMessage("");
@@ -35,26 +44,58 @@ export default function LoginPage() {
     }
 
     try {
-      // 1) Try to sign in
-      await signInWithEmailAndPassword(auth, email, password);
-      if (navigator.vibrate) navigator.vibrate([10, 30]); // original login haptic
-    } catch (e: any) {
-      // 2) If no such user, create account
-      if (e?.code === "auth/user-not-found") {
+      const methods = await fetchSignInMethodsForEmail(auth, email);
+
+      if (methods.includes("password")) {
+        // Existing account → sign in
         try {
-          await createUserWithEmailAndPassword(auth, email, password);
-          if (navigator.vibrate) navigator.vibrate([10, 30, 10]); // original create haptic
-        } catch (createErr: any) {
-          setMessage(createErr?.message ?? String(createErr));
+          await signInWithEmailAndPassword(auth, email, password);
+          setWrongAttempts(0);
+        } catch (e: any) {
+          const code = String(e?.code || "");
+          if (
+            code === "auth/wrong-password" ||
+            code === "auth/invalid-credential" ||
+            code === "auth/invalid-login-credentials"
+          ) {
+            const next = wrongAttempts + 1;
+            setWrongAttempts(next);
+            setMessage("Wrong password. Try again.");
+            if (next >= 3) {
+              showToast('Having trouble? Tap "Forgot password?" to reset.');
+            }
+          } else {
+            setMessage(e?.message ?? String(e));
+          }
           setLoading(false);
           return;
         }
       } else {
-        // Other sign-in errors (wrong password, invalid email, etc.)
-        setMessage(e?.message ?? String(e));
-        setLoading(false);
-        return;
+        // New email → create account
+        try {
+          await createUserWithEmailAndPassword(auth, email, password);
+          setWrongAttempts(0);
+        } catch (createErr: any) {
+          const c = String(createErr?.code || "");
+          if (c === "auth/email-already-in-use") {
+            setMessage(
+              "An account already exists for this email. Try logging in or use “Forgot password?”"
+            );
+          } else if (c === "auth/weak-password") {
+            setMessage("Password is too weak. Try a stronger password.");
+          } else if (c === "auth/invalid-email") {
+            setMessage("That email looks invalid. Please check and try again.");
+          } else {
+            setMessage(createErr?.message ?? String(createErr));
+          }
+          setLoading(false);
+          return;
+        }
       }
+    } catch (lookupErr: any) {
+      setMessage(lookupErr?.message ?? String(lookupErr));
+      setLoading(false);
+      return;
     }
 
     setLoading(false);
@@ -65,6 +106,7 @@ export default function LoginPage() {
     try {
       await sendPasswordResetEmail(auth, email);
       setMessage("Password reset sent.");
+      showToast("Check your inbox for a reset link.");
     } catch (e: any) {
       setMessage(e?.message ?? String(e));
     }
@@ -72,7 +114,7 @@ export default function LoginPage() {
 
   return (
     <div className="relative min-h-screen">
-      {/* background looping video behind everything */}
+      {/* looping background video */}
       <RandomBackgroundVideo
         sources={[
           "/bg/3595-172488292.mp4",
@@ -86,7 +128,17 @@ export default function LoginPage() {
         overlay
       />
 
-      {/* original login UI, unchanged */}
+      {/* tiny toast */}
+      {toast && (
+        <div
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 px-4 py-2 rounded-full bg-black/80 text-white text-sm border border-white/10 shadow"
+          role="status"
+        >
+          {toast}
+        </div>
+      )}
+
+      {/* original login UI */}
       <div className="relative z-10 min-h-screen flex items-center justify-center px-6">
         <div className="w-full max-w-md space-y-6">
           <div className="text-center">
@@ -97,7 +149,7 @@ export default function LoginPage() {
             <input
               placeholder="Email"
               value={email}
-              onChange={(e) => { setEmail(e.target.value); if (navigator.vibrate) navigator.vibrate(5); }}
+              onChange={(e) => { setEmail(e.target.value); }}
               className="w-full bg-black border border-neutral-700 rounded-xl px-4 py-3 text-black placeholder-black"
               style={{ color: "black", backgroundColor: "white" }}
             />
@@ -105,12 +157,11 @@ export default function LoginPage() {
               placeholder="Password"
               type="password"
               value={password}
-              onChange={(e) => { setPassword(e.target.value); if (navigator.vibrate) navigator.vibrate(5); }}
+              onChange={(e) => { setPassword(e.target.value); }}
               className="w-full bg-black border border-neutral-700 rounded-xl px-4 py-3 text-black placeholder-black"
               style={{ color: "black", backgroundColor: "white" }}
             />
 
-            {/* Single button: Log In / Create Account */}
             <button
               onClick={continueLoginOrCreate}
               className="btn btn-primary w-full"
@@ -119,7 +170,6 @@ export default function LoginPage() {
               {loading ? "..." : "Log In / Create Account"}
             </button>
 
-            {/* Forgot password (unchanged) */}
             <button onClick={reset} className="text-sm underline underline-offset-4 opacity-80">
               Forgot password?
             </button>
