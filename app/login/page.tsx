@@ -1,7 +1,7 @@
 // app/login/page.tsx
 'use client';
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { auth } from "@/lib/firebase";
 import {
   signInWithEmailAndPassword,
@@ -18,6 +18,19 @@ export default function LoginPage() {
   const [message, setMessage] = useState("");
   const [toast, setToast] = useState("");
   const [wrongAttempts, setWrongAttempts] = useState(0);
+
+  // IMPORTANT: make the sources array stable so typing doesn't retrigger a new random video
+  const bgSources = useMemo(
+    () => [
+      "/bg/3595-172488292.mp4",
+      "/bg/19873-908438835.mp4",
+      "/bg/217763_tiny.mp4",
+      "/bg/2337-157269912.mp4",
+      "/bg/243156_medium.mp4",
+      "/bg/230724.mp4",
+    ],
+    []
+  );
 
   // Redirect if already signed in
   useEffect(() => {
@@ -46,6 +59,8 @@ export default function LoginPage() {
     try {
       await signInWithEmailAndPassword(auth, email, password);
       setWrongAttempts(0);
+      // Success toast (redirect will happen via onAuthStateChanged)
+      showToast("Welcome back!");
     } catch (e: any) {
       const code = String(e?.code || "");
       if (
@@ -60,7 +75,6 @@ export default function LoginPage() {
           showToast('Having trouble? Tap "Forgot password?" to reset.', 3500);
         }
       } else if (code === "auth/user-not-found") {
-        // make sure we clearly say it's not a valid account
         setMessage("No account found for this email. You can create one below.");
       } else {
         setMessage(e?.message ?? String(e));
@@ -83,6 +97,8 @@ export default function LoginPage() {
     try {
       await createUserWithEmailAndPassword(auth, email, password);
       setWrongAttempts(0);
+      // Success toast (redirect will happen via onAuthStateChanged)
+      showToast("Account created! Welcome 👋");
     } catch (e: any) {
       const code = String(e?.code || "");
       if (code === "auth/email-already-in-use") {
@@ -117,16 +133,9 @@ export default function LoginPage() {
 
   return (
     <div className="relative min-h-screen">
-      {/* Background loop (unchanged look/behavior) */}
+      {/* Background loop (now with stable sources to prevent re-randomizing while typing) */}
       <RandomBackgroundVideo
-        sources={[
-          "/bg/3595-172488292.mp4",
-          "/bg/19873-908438835.mp4",
-          "/bg/217763_tiny.mp4",
-          "/bg/2337-157269912.mp4",
-          "/bg/243156_medium.mp4",
-          "/bg/230724.mp4",
-        ]}
+        sources={bgSources}
         poster="/bg/fallback.jpg"
         overlay
       />
@@ -166,7 +175,7 @@ export default function LoginPage() {
               style={{ color: "black", backgroundColor: "white" }}
             />
 
-            {/* TWO SEPARATE BUTTONS */}
+            {/* Separate buttons (unchanged styling) */}
             <button
               onClick={login}
               className="btn btn-primary w-full"
